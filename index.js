@@ -4,17 +4,14 @@ const Cookie = require('cookie');
 const Crypto = require('crypto');
 const JsonWebToken = require('jsonwebtoken');
 const JwkToPem = require('jwk-to-pem');
-const QueryString = require('querystring')
+const QueryString = require('querystring');
 const log = require('lambda-log');
 const pkceChallenge = require("pkce-challenge");
 require('dotenv').config();
 
 let discoveryDocument;
 let jwks;
-let config;
 let deps;
-let publicKey;
-let privateKey;
 
 exports.handler = async (event) => {
 	log.options.meta.event = event;
@@ -29,19 +26,19 @@ exports.handler = async (event) => {
 		log.error(err);
 		return getInternalServerErrorPayload();
 	}
-}
+};
 
 async function authenticate(evt) {
 	const { request } = evt.Records[0].cf;
 	const { headers, querystring } = request;
 	const queryString = QueryString.parse(querystring);
-	if (request.uri.startsWith(config.CALLBACK_PATH)) {
+	if (request.uri.startsWith(process.env.CALLBACK_PATH)) {
 		if (queryString.error) {
 			return handleErrorResponse(queryString.error);
 		}
 		return getNewSession({ request, queryString, headers });
     }
-	if ('cookie' in headers && 'TOKEN' in Cookie.parse(headers.cookie[0].value)) {
+	if ('cookie' in headers && 'SUB' in Cookie.parse(headers.cookie[0].value)) {
 		return checkAuthorization(request, headers);
     }
 	return getAuthorizationRequest(request, headers);
@@ -49,22 +46,15 @@ async function authenticate(evt) {
 
 async function checkAuthorization(request, headers) {
 	try {
-		await verifyJwt(Cookie.parse(headers.cookie[0].value).TOKEN, publicKey.trim(), {
-			algorithms: ['RS256']
-		});
+		const decryptedData = decrypt(Cookie.parse(headers.cookie[0].value).IV, Cookie.parse(headers.cookie[0].value).SUB);
+		if (!decryptedData) {
+			return getUnauthorizedResponse('Invalid Session');
+		}
+		log.info(decryptedData);
 		return request;
 	} catch (err) {
-		switch (err.name) {
-			case 'TokenExpiredError':
-				log.info(err);
-				return getAuthorizationRequest(request, headers);
-			case 'JsonWebTokenError':
-				log.error(err);
-				return getUnauthorizedResponse(err.message);
-			default:
-				log.error(err);
-				return getUnauthorizedResponse(`User is Not Permitted`);
-		}
+		log.error(err);
+		return getUnauthorizedResponse(`User is Not Permitted`);
 	}
 }
 
@@ -77,18 +67,16 @@ async function getNewSession({ request, queryString, headers }) {
 		if ('cookie' in headers && 'STATE' in Cookie.parse(headers.cookie[0].value) && !validateHashStr(queryString.state, Cookie.parse(headers.cookie[0].value).STATE)) {
 			return getUnauthorizedResponse("Invalid State");
 		}
-		config.TOKEN_REQUEST.code = queryString.code;
-		config.TOKEN_REQUEST.code_verifier = Cookie.parse(headers.cookie[0].value).VERIFIER;
-		const { idToken, decodedToken } = await getIdAndDecodedToken();
+		const { idToken, decodedToken } = await getIdAndDecodedToken(queryString.code, Cookie.parse(headers.cookie[0].value).VERIFIER);
 		const rawPem = jwks.keys.filter((k) => k.kid === decodedToken.header.kid)[0];
 		if (rawPem === undefined) {
 			throw new Error('unable to find expected pem in jwks keys');
 		}
 		const pem = JwkToPem(rawPem);
 		try {
-			const decoded = await verifyJwt(idToken, pem, { algorithms: ['RS256'], audience: config.AUTH_REQUEST.client_id, issuer: discoveryDocument.issuer });
+			const decoded = await verifyJwt(idToken, pem, { algorithms: ['RS256'], audience: process.env.CLIENT_ID, issuer: discoveryDocument.issuer });
 			if ('cookie' in headers && 'NONCE' in Cookie.parse(headers.cookie[0].value) && validateHashStr(decoded.nonce, Cookie.parse(headers.cookie[0].value).NONCE)) {
-				return getRedirectPayload({ decodedToken, headers });
+				return getRedirectPayload(decodedToken);
 			}
 			return getUnauthorizedResponse('Invalid Nonce');
 		} catch (err) {
@@ -98,7 +86,7 @@ async function getNewSession({ request, queryString, headers }) {
 			}
 			switch (err.name) {
 				case 'TokenExpiredError':
-					log.info(err);
+					log.error(err);
 					return getAuthorizationRequest(request, headers);
 				case 'JsonWebTokenError':
 					log.error(err);
@@ -114,9 +102,15 @@ async function getNewSession({ request, queryString, headers }) {
 	}
 }
 
-async function getIdAndDecodedToken() {
-	const tokenRequest = QueryString.stringify(config.TOKEN_REQUEST);
-	const response = await deps.axios.post(discoveryDocument.token_endpoint, tokenRequest);
+async function getIdAndDecodedToken(code, verifier) {
+	const response = await deps.axios.post(discoveryDocument.token_endpoint, QueryString.stringify({
+		"code": code,
+		"client_id": process.env.CLIENT_ID,
+		"client_secret": process.env.CLIENT_SECRET,
+		"redirect_uri": process.env.REDIRECT_URI,
+		"grant_type": "authorization_code",
+		"code_verifier": verifier
+	}));
 	const decodedToken = JsonWebToken.decode(response.data.id_token, {
 		complete: true
 	});
@@ -135,31 +129,9 @@ async function verifyJwt(token, pem, algorithms) {
 	});
 }
 
-async function fetchConfigFromParameterStore() {
-    const request = {
-        Path: process.env.PARAMETERS_PATH,
-        Recursive: true,
-        WithDecryption: true
-    }
-    return await deps.ssm.getParametersByPath(request).promise();
-}
-
 async function prepareConfigGlobals() {
-    const response = await fetchConfigFromParameterStore();
-    response.Parameters.forEach(function(v) {
-        if ( !config && v.Name === process.env.PARAMETERS_PATH + "PAYLOADS" ) {
-			config = JSON.parse(v.Value);
-        }
-        if ( !publicKey && v.Name === process.env.PARAMETERS_PATH + "PUBLIC_KEY") {
-            publicKey = v.Value;
-        }
-        if ( !privateKey && v.Name === process.env.PARAMETERS_PATH + "PRIVATE_KEY" ) {
-            privateKey = v.Value;
-        }
-	});
-
 	if (!discoveryDocument) {
-		discoveryDocument = (await deps.axios.get(config.DISCOVERY_DOCUMENT)).data;
+		discoveryDocument = (await deps.axios.get(process.env.DISCOVERY_DOCUMENT)).data;
 	}
 
 	if (!jwks) {
@@ -170,7 +142,8 @@ async function prepareConfigGlobals() {
 	}
 }
 
-function getRedirectPayload({ decodedToken, headers }) {
+function getRedirectPayload(decodedToken) {
+	const { iv, encryptedData } = encrypt(decodedToken.payload.sub);
 	const response = {
 		status: '302',
 		statusDescription: 'Found',
@@ -186,16 +159,24 @@ function getRedirectPayload({ decodedToken, headers }) {
 				{
 					key: 'Set-Cookie',
 					value: Cookie.serialize(
-						'TOKEN',
-						JsonWebToken.sign({}, privateKey.trim(), {
-							audience: headers.host[0].value,
-							subject: decodedToken.payload.sub,
-							expiresIn: config.SESSION_DURATION,
-							algorithm: 'RS256'
-						}),
+						'SUB',
+						encryptedData,
 						{
 							path: '/',
-							maxAge: config.SESSION_DURATION,
+							maxAge: process.env.SESSION_DURATION,
+							httpOnly: true,
+							secure: true
+						}
+					)
+				},
+				{
+					key: 'Set-Cookie',
+					value: Cookie.serialize(
+						'IV',
+						iv,
+						{
+							path: '/',
+							maxAge: process.env.SESSION_DURATION,
 							httpOnly: true,
 							secure: true
 						}
@@ -232,10 +213,6 @@ function getAuthorizationRequest() {
 	const nonce = base64URLEncode(Crypto.randomBytes(32));
 	const state = base64URLEncode(Crypto.randomBytes(32));
 	const pkce = pkceChallenge(128);
-	config.AUTH_REQUEST.nonce = nonce;
-	config.AUTH_REQUEST.state = state;
-	config.AUTH_REQUEST.code_challenge = pkce.code_challenge;
-	config.AUTH_REQUEST.code_challenge_method = "S256";
 	return {
 		status: '302',
 		statusDescription: 'Found',
@@ -244,15 +221,29 @@ function getAuthorizationRequest() {
 			location: [
 				{
 					key: 'Location',
-					value: `${discoveryDocument.authorization_endpoint}?${QueryString.stringify(
-						config.AUTH_REQUEST
-					)}`
+					value: `${discoveryDocument.authorization_endpoint}?${QueryString.stringify({
+						"client_id": process.env.CLIENT_ID,
+						"redirect_uri": process.env.REDIRECT_URI,
+						"response_type": "code",
+						"scope": "openid",
+						"nonce": nonce,
+						"state": state,
+						"code_challenge": pkce.code_challenge,
+						"code_challenge_method": "S256"
+					})}`
 				}
 			],
 			'set-cookie': [
 				{
 					key: 'Set-Cookie',
-					value: Cookie.serialize('TOKEN', '', {
+					value: Cookie.serialize('SUB', '', {
+						path: '/',
+						expires: new Date(1970, 1, 1, 0, 0, 0, 0)
+					})
+				},
+				{
+					key: 'Set-Cookie',
+					value: Cookie.serialize('IV', '', {
 						path: '/',
 						expires: new Date(1970, 1, 1, 0, 0, 0, 0)
 					})
@@ -300,6 +291,23 @@ function base64URLEncode(str) {
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
         .replace(/=/g, '');
+}
+
+function encrypt(data) {
+    const key = Crypto.scryptSync(process.env.PASSWORD, process.env.SALT, 32);
+    const iv = Crypto.randomBytes(16).toString('hex').slice(0, 16);
+	const cipher = Crypto.createCipheriv('aes-256-cbc', key, iv);
+    cipher.update(data, 'utf8', 'hex');
+	let encryptedData = cipher.final('hex');
+    return { iv, encryptedData };
+}
+
+function decrypt(iv, encryptedData) {
+    const key = Crypto.scryptSync(process.env.PASSWORD, process.env.SALT, 32);
+	const decipher = Crypto.createDecipheriv('aes-256-cbc', key, iv);
+	decipher.update(encryptedData, 'hex', 'utf8');
+	let decryptedData = decipher.final('utf8');
+    return decryptedData;
 }
 
 function handleErrorResponse(err) {
