@@ -10,6 +10,7 @@ require('dotenv').config();
 
 exports.handler = async (event) => {
 	Log.options.meta.event = event;
+	Log.options.debug = process.env.DEBUG || false;
 	try {
 		return await authenticate(event);
 	} catch (err) {
@@ -26,21 +27,23 @@ async function authenticate(evt) {
 		if (queryString.error) {
 			return handleErrorResponse(queryString.error);
 		}
-		return getNewSession({ queryString, headers });
+		return getNewSession({ queryString, headers, request });
     }
 	if ('cookie' in headers && 'SUB' in Cookie.parse(headers.cookie[0].value)) {
 		return checkAuthorization(request, headers);
 	}
-	const discoveryDocument = await getDiscoveryDocument();
-	return getAuthorizationRequest(discoveryDocument.authorization_endpoint);
+	return getAuthorizationRequest(request);
 }
 
 async function checkAuthorization(request, headers) {
 	try {
-		const decryptedData = decrypt(Cookie.parse(headers.cookie[0].value).IV, Cookie.parse(headers.cookie[0].value).SUB);
+		const decryptedData = JSON.parse(decrypt(Cookie.parse(headers.cookie[0].value).SUB));
 		if (!decryptedData) {
 			return getUnauthorizedResponse('Invalid Session');
+		}else if (decryptedData.expires_at < getNow()) {
+			return getAuthorizationRequest(request);
 		}
+		Log.debug(`authorized user: ${decryptedData.sub}`);
 		return request;
 	} catch (err) {
 		Log.error(err);
@@ -48,31 +51,29 @@ async function checkAuthorization(request, headers) {
 	}
 }
 
-async function getNewSession({ queryString, headers }) {
+async function getNewSession({ queryString, headers, request }) {
 	try {
 		if (!queryString.code) {
 			return getUnauthorizedResponse('No Code Found');
 		}
-
-		if ('cookie' in headers && 'STATE' in Cookie.parse(headers.cookie[0].value) && !validateHashStr(queryString.state, Cookie.parse(headers.cookie[0].value).STATE)) {
-			return getUnauthorizedResponse("Invalid State");
+		const oidcCtx = JSON.parse(decrypt(Cookie.parse(headers.cookie[0].value).OIDC));
+		if (oidcCtx.expires_at < getNow()) {
+			return getAuthorizationRequest(request);
 		}
 
-		const discoveryDocument = await getDiscoveryDocument();
-		const { idToken, decodedToken } = await getIdAndDecodedToken(discoveryDocument.token_endpoint, queryString.code, Cookie.parse(headers.cookie[0].value).VERIFIER);
-
-		const jwks = await getJWKS(discoveryDocument.jwks_uri);
+		if (queryString.state !== oidcCtx.state) {
+			return getUnauthorizedResponse("Invalid State");
+		}
+		const { idToken, decodedToken } = await getIdAndDecodedToken(queryString.code, oidcCtx.verifier);
+		const jwks = await getJWKS();
 		const rawPem = jwks.keys.filter((k) => k.kid === decodedToken.header.kid)[0];
 		if (rawPem === undefined) {
 			throw new Error('unable to find expected pem in jwks keys');
 		}
 		const pem = JwkToPem(rawPem);
 		try {
-			const decoded = await verifyJwt(idToken, pem, { algorithms: ['RS256'], audience: process.env.CLIENT_ID, issuer: discoveryDocument.issuer });
-			if ('cookie' in headers && 'NONCE' in Cookie.parse(headers.cookie[0].value) && validateHashStr(decoded.nonce, Cookie.parse(headers.cookie[0].value).NONCE)) {
-				return getRedirectPayload(decodedToken.payload.sub);
-			}
-			return getUnauthorizedResponse('Invalid Nonce');
+			await verifyJwt(idToken, pem, { algorithms: ['RS256'], audience: process.env.CLIENT_ID, issuer: process.env.ISSUER, nonce: oidcCtx.nonce });
+			return getRedirectPayload(decodedToken.payload.sub, oidcCtx.path);
 		} catch (err) {
 			if (!err || !err.name) {
 				Log.error(err);
@@ -81,7 +82,7 @@ async function getNewSession({ queryString, headers }) {
 			switch (err.name) {
 				case 'TokenExpiredError':
 					Log.error(err);
-					return getAuthorizationRequest(discoveryDocument.authorization_endpoint);
+					return getAuthorizationRequest(request);
 				case 'JsonWebTokenError':
 					Log.error(err);
 					return getUnauthorizedResponse(err.message);
@@ -96,8 +97,8 @@ async function getNewSession({ queryString, headers }) {
 	}
 }
 
-async function getIdAndDecodedToken(tokenEndpointURL, code, verifier) {
-	const response = await Axios.post(tokenEndpointURL, QueryString.stringify({
+async function getIdAndDecodedToken(code, verifier) {
+	const response = await Axios.post(process.env.TOKEN_ENDPOINT, QueryString.stringify({
 		"code": code,
 		"client_id": process.env.CLIENT_ID,
 		"client_secret": process.env.CLIENT_SECRET,
@@ -111,9 +112,9 @@ async function getIdAndDecodedToken(tokenEndpointURL, code, verifier) {
 	return { idToken: response.data.id_token, decodedToken };
 }
 
-function getAuthorizationRequest(authorizationEndpointURL) {
-	const nonce = base64URLEncode(Crypto.randomBytes(32));
-	const state = base64URLEncode(Crypto.randomBytes(32));
+function getAuthorizationRequest(request) {
+	const nonce = Crypto.randomBytes(32).toString('hex');
+	const state = Crypto.randomBytes(32).toString('hex');
 	const pkce = PkceChallenge(128);
 	return {
 		status: '302',
@@ -123,7 +124,7 @@ function getAuthorizationRequest(authorizationEndpointURL) {
 			location: [
 				{
 					key: 'Location',
-					value: `${authorizationEndpointURL}?${QueryString.stringify({
+					value: `${process.env.AUTHZ_ENDPOINT}?${QueryString.stringify({
 						"client_id": process.env.CLIENT_ID,
 						"redirect_uri": process.env.REDIRECT_URI,
 						"response_type": "code",
@@ -145,30 +146,13 @@ function getAuthorizationRequest(authorizationEndpointURL) {
 				},
 				{
 					key: 'Set-Cookie',
-					value: Cookie.serialize('IV', '', {
-						path: '/',
-						expires: new Date(1970, 1, 1, 0, 0, 0, 0)
-					})
-				},
-				{
-					key: 'Set-Cookie',
-					value: Cookie.serialize('NONCE', getHashStr(nonce), {
-						path: '/',
-						httpOnly: true,
-						secure: true
-					})
-				},
-				{
-					key: 'Set-Cookie',
-					value: Cookie.serialize('STATE', getHashStr(state), {
-						path: '/',
-						httpOnly: true,
-						secure: true
-					})
-				},
-				{
-					key: 'Set-Cookie',
-					value: Cookie.serialize('VERIFIER', pkce.code_verifier, {
+					value: Cookie.serialize('OIDC', `${encrypt(JSON.stringify({
+						nonce: nonce,
+						state: state,
+						verifier: pkce.code_verifier,
+						path: request.uri,
+						expires_at: getNow() + 180,
+					}))}`, {
 						path: '/',
 						httpOnly: true,
 						secure: true
@@ -179,8 +163,7 @@ function getAuthorizationRequest(authorizationEndpointURL) {
 	};
 }
 
-function getRedirectPayload(sub) {
-	const { iv, encryptedData } = encrypt(sub);
+function getRedirectPayload(sub, path) {
 	const response = {
 		status: '302',
 		statusDescription: 'Found',
@@ -189,53 +172,25 @@ function getRedirectPayload(sub) {
 			location: [
 				{
 					key: 'Location',
-					value: "/"
+					value: path
 				}
 			],
 			'set-cookie': [
 				{
 					key: 'Set-Cookie',
-					value: Cookie.serialize(
-						'SUB',
-						encryptedData,
-						{
-							path: '/',
-							maxAge: process.env.SESSION_DURATION,
-							httpOnly: true,
-							secure: true
-						}
-					)
-				},
-				{
-					key: 'Set-Cookie',
-					value: Cookie.serialize(
-						'IV',
-						iv,
-						{
-							path: '/',
-							maxAge: process.env.SESSION_DURATION,
-							httpOnly: true,
-							secure: true
-						}
-					)
-				},
-				{
-					key: 'Set-Cookie',
-					value: Cookie.serialize('NONCE', '', {
+					value: Cookie.serialize('SUB', `${encrypt(JSON.stringify({
+						sub: sub,
+						expires_at: getNow() + process.env.SESSION_DURATION,
+					}))}`, {
 						path: '/',
-						expires: new Date(1970, 1, 1, 0, 0, 0, 0)
+						maxAge: process.env.SESSION_DURATION,
+						httpOnly: true,
+						secure: true
 					})
 				},
 				{
 					key: 'Set-Cookie',
-					value: Cookie.serialize('STATE', '', {
-						path: '/',
-						expires: new Date(1970, 1, 1, 0, 0, 0, 0)
-					})
-				},
-				{
-					key: 'Set-Cookie',
-					value: Cookie.serialize('VERIFIER', '', {
+					value: Cookie.serialize('OIDC', '', {
 						path: '/',
 						expires: new Date(1970, 1, 1, 0, 0, 0, 0)
 					})
@@ -246,9 +201,9 @@ function getRedirectPayload(sub) {
 	return response;
 }
 
-async function verifyJwt(token, pem, algorithms) {
+async function verifyJwt(token, pem, options) {
 	return new Promise((resolve, reject) => {
-		JsonWebToken.verify(token, pem, algorithms, (err, decoded) => {
+		JsonWebToken.verify(token, pem, options, (err, decoded) => {
 			if (err) {
 				Log.error(err);
 				return reject(err);
@@ -258,44 +213,28 @@ async function verifyJwt(token, pem, algorithms) {
 	});
 }
 
-async function getDiscoveryDocument() {
-	return (await Axios.get(process.env.DISCOVERY_DOCUMENT)).data;
+async function getJWKS() {
+	return (await Axios.get(process.env.JWKS_URI)).data;
 }
 
-async function getJWKS(jwksURL) {
-	return (await Axios.get(jwksURL)).data;
-}
-
-function getHashStr(str) {
-	return base64URLEncode(Crypto.createHash('sha256').update(str).digest());
-}
-
-function validateHashStr(str, hash) {
-	const other = base64URLEncode(Crypto.createHash('sha256').update(str).digest());
-	return other === hash;
-}
-
-function base64URLEncode(str) {
-    return str.toString('base64')
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=/g, '');
+function getNow() {
+	return Math.floor(Date.now() / 1000);
 }
 
 function encrypt(data) {
-    const key = Crypto.scryptSync(process.env.PASSWORD, process.env.SALT, 32);
-    const iv = Crypto.randomBytes(16).toString('hex').slice(0, 16);
-	const cipher = Crypto.createCipheriv('aes-256-cbc', key, iv);
-    cipher.update(data, 'utf8', 'hex');
-	const encryptedData = cipher.final('hex');
-    return { iv, encryptedData };
+    const iv = Crypto.randomBytes(16);
+	const cipher = Crypto.createCipheriv('aes-256-cbc', Buffer.from(process.env.ENCRYPT_KEY), iv);
+    let encryptedData = cipher.update(data, 'utf8', 'hex');
+	encryptedData += cipher.final('hex');
+    return iv.toString('hex')+encryptedData;
 }
 
-function decrypt(iv, encryptedData) {
-    const key = Crypto.scryptSync(process.env.PASSWORD, process.env.SALT, 32);
-	const decipher = Crypto.createDecipheriv('aes-256-cbc', key, iv);
-	decipher.update(encryptedData, 'hex', 'utf8');
-	const decryptedData = decipher.final('utf8');
+function decrypt(encrypted) {
+	const iv = Buffer.from(encrypted.slice(0, 32), 'hex');
+	const encryptedData = Buffer.from(encrypted.slice(32), 'hex');
+	const decipher = Crypto.createDecipheriv('aes-256-cbc', Buffer.from(process.env.ENCRYPT_KEY), iv);
+	let decryptedData = decipher.update(encryptedData, 'hex', 'utf8');
+	decryptedData += decipher.final('utf8');
     return decryptedData;
 }
 
@@ -350,28 +289,7 @@ function getUnauthorizedResponse(error) {
 				},
 				{
 					key: 'Set-Cookie',
-					value: Cookie.serialize('IV', '', {
-						path: '/',
-						expires: new Date(1970, 1, 1, 0, 0, 0, 0)
-					})
-				},
-				{
-					key: 'Set-Cookie',
-					value: Cookie.serialize('NONCE', '', {
-						path: '/',
-						expires: new Date(1970, 1, 1, 0, 0, 0, 0)
-					})
-				},
-				{
-					key: 'Set-Cookie',
-					value: Cookie.serialize('STATE', '', {
-						path: '/',
-						expires: new Date(1970, 1, 1, 0, 0, 0, 0)
-					})
-				},
-				{
-					key: 'Set-Cookie',
-					value: Cookie.serialize('VERIFIER', '', {
+					value: Cookie.serialize('OIDC', '', {
 						path: '/',
 						expires: new Date(1970, 1, 1, 0, 0, 0, 0)
 					})
