@@ -23,7 +23,7 @@ async function authenticate(evt) {
 	const { request } = evt.Records[0].cf;
 	const { headers, querystring } = request;
 	const queryString = QueryString.parse(querystring);
-	if (request.uri.startsWith(process.env.CALLBACK_PATH)) {
+	if (request.uri.startsWith("/_callback")) {
 		if (queryString.error) {
 			return handleErrorResponse(queryString.error);
 		}
@@ -102,7 +102,7 @@ async function getIdAndDecodedToken(code, verifier) {
 		"code": code,
 		"client_id": process.env.CLIENT_ID,
 		"client_secret": process.env.CLIENT_SECRET,
-		"redirect_uri": process.env.REDIRECT_URI,
+		"redirect_uri": process.env.CLOUDFRONT_URL + "/_callback",
 		"grant_type": "authorization_code",
 		"code_verifier": verifier
 	}));
@@ -126,7 +126,7 @@ function getAuthorizationRequest(request) {
 					key: 'Location',
 					value: `${process.env.AUTHZ_ENDPOINT}?${QueryString.stringify({
 						"client_id": process.env.CLIENT_ID,
-						"redirect_uri": process.env.REDIRECT_URI,
+						"redirect_uri": process.env.CLOUDFRONT_URL + "/_callback",
 						"response_type": "code",
 						"scope": "openid",
 						"nonce": nonce,
@@ -150,7 +150,7 @@ function getAuthorizationRequest(request) {
 						nonce: nonce,
 						state: state,
 						verifier: pkce.code_verifier,
-						path: request.uri,
+						path: request.uri.startsWith("/") ? request.uri : "/",
 						expires_at: getNow() + 180,
 					}))}`, {
 						path: '/',
@@ -172,7 +172,7 @@ function getRedirectPayload(sub, path) {
 			location: [
 				{
 					key: 'Location',
-					value: path
+					value: path.startsWith("/") ? path : "/"
 				}
 			],
 			'set-cookie': [
@@ -223,7 +223,7 @@ function getNow() {
 
 function encrypt(data) {
     const iv = Crypto.randomBytes(16);
-	const cipher = Crypto.createCipheriv('aes-256-cbc', Buffer.from(process.env.ENCRYPT_KEY), iv);
+	const cipher = Crypto.createCipheriv('aes-256-cbc', Buffer.from(process.env.ENCRYPT_KEY, 'hex'), iv);
     let encryptedData = cipher.update(data, 'utf8', 'hex');
 	encryptedData += cipher.final('hex');
     return iv.toString('hex')+encryptedData;
@@ -232,7 +232,7 @@ function encrypt(data) {
 function decrypt(encrypted) {
 	const iv = Buffer.from(encrypted.slice(0, 32), 'hex');
 	const encryptedData = Buffer.from(encrypted.slice(32), 'hex');
-	const decipher = Crypto.createDecipheriv('aes-256-cbc', Buffer.from(process.env.ENCRYPT_KEY), iv);
+	const decipher = Crypto.createDecipheriv('aes-256-cbc', Buffer.from(process.env.ENCRYPT_KEY, 'hex'), iv);
 	let decryptedData = decipher.update(encryptedData, 'hex', 'utf8');
 	decryptedData += decipher.final('utf8');
     return decryptedData;
