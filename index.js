@@ -12,57 +12,68 @@ exports.handler = async (event) => {
 	Log.options.meta.event = event;
 	Log.options.debug = process.env.DEBUG || false;
 	try {
-		return await authenticate(event);
+		const { request } = event.Records[0].cf;
+		return await handleRequest(request);
 	} catch (err) {
 		Log.error(err);
-		return getInternalServerErrorPayload();
+		return generateInternalServerErrorResponse();
 	}
 };
 
-async function authenticate(evt) {
-	const { request } = evt.Records[0].cf;
+async function handleRequest(request) {
+    if (request.uri.startsWith("/_callback")) {
+        return await handleCallback(request);
+    }
+	if (!(await hasValidSession(request))) {
+        return startAuthentication(request);
+    }
+    return request;
+}
+
+async function handleCallback(request) {
 	const { headers, querystring } = request;
 	const queryString = QueryString.parse(querystring);
-	if (request.uri.startsWith("/_callback")) {
-		if (queryString.error) {
-			return handleErrorResponse(queryString.error);
-		}
-		return getNewSession({ queryString, headers, request });
-    }
-	if ('cookie' in headers && 'SUB' in Cookie.parse(headers.cookie[0].value)) {
-		return checkAuthorization(request, headers);
+	Log.debug(headers);
+	Log.debug(queryString);
+	if (queryString.error) {
+		return generateUnauthorizedResponse(queryString.error);
 	}
-	return getAuthorizationRequest(request);
+	return await handleAuthorizationResponse({ queryString, headers, request });
 }
 
-async function checkAuthorization(request, headers) {
+async function hasValidSession(request) {
 	try {
-		const decryptedData = JSON.parse(decrypt(Cookie.parse(headers.cookie[0].value).SUB));
+		const { headers } = request;
+		const sub = 'cookie' in headers && 'SUB' in Cookie.parse(headers.cookie[0].value) ? Cookie.parse(headers.cookie[0].value).SUB : "";
+		if (!sub) {
+			return false;
+		}
+		const decryptedData = JSON.parse(decrypt(sub));
 		if (!decryptedData) {
-			return getUnauthorizedResponse('Invalid Session');
+			return false;
 		}else if (decryptedData.expires_at < getNow()) {
-			return getAuthorizationRequest(request);
+			return false;
 		}
 		Log.debug(`authorized user: ${decryptedData.sub}`);
-		return request;
+		return true;
 	} catch (err) {
 		Log.error(err);
-		return getUnauthorizedResponse(`User is Not Permitted`);
+		return false;
 	}
 }
 
-async function getNewSession({ queryString, headers, request }) {
+async function handleAuthorizationResponse({ queryString, headers, request }) {
 	try {
 		if (!queryString.code) {
-			return getUnauthorizedResponse('No Code Found');
+			return generateUnauthorizedResponse('No Code Found');
 		}
 		const oidcCtx = JSON.parse(decrypt(Cookie.parse(headers.cookie[0].value).OIDC));
 		if (oidcCtx.expires_at < getNow()) {
-			return getAuthorizationRequest(request);
+			return startAuthentication(request);
 		}
 
 		if (queryString.state !== oidcCtx.state) {
-			return getUnauthorizedResponse("Invalid State");
+			return generateUnauthorizedResponse("Invalid State");
 		}
 		const { idToken, decodedToken } = await getIdAndDecodedToken(queryString.code, oidcCtx.verifier);
 		const jwks = await getJWKS();
@@ -73,27 +84,27 @@ async function getNewSession({ queryString, headers, request }) {
 		const pem = JwkToPem(rawPem);
 		try {
 			await verifyJwt(idToken, pem, { algorithms: ['RS256'], audience: process.env.CLIENT_ID, issuer: process.env.ISSUER, nonce: oidcCtx.nonce });
-			return getRedirectPayload(decodedToken.payload.sub, oidcCtx.path);
+			return generateAuthorizedResponse(decodedToken.payload.sub, oidcCtx.path);
 		} catch (err) {
 			if (!err || !err.name) {
 				Log.error(err);
-				return getUnauthorizedResponse(`User is Not Permitted`);
+				return generateUnauthorizedResponse(`User is Not Permitted`);
 			}
 			switch (err.name) {
 				case 'TokenExpiredError':
 					Log.error(err);
-					return getAuthorizationRequest(request);
+					return startAuthentication(request);
 				case 'JsonWebTokenError':
 					Log.error(err);
-					return getUnauthorizedResponse(err.message);
+					return generateUnauthorizedResponse(err.message);
 				default:
 					Log.error(err);
-					return getUnauthorizedResponse(`User is Not Permitted`);
+					return generateUnauthorizedResponse(`User is Not Permitted`);
 			}
 		}
 	} catch (error) {
 		Log.error(error);
-		return getInternalServerErrorPayload();
+		return generateInternalServerErrorResponse();
 	}
 }
 
@@ -112,7 +123,7 @@ async function getIdAndDecodedToken(code, verifier) {
 	return { idToken: response.data.id_token, decodedToken };
 }
 
-function getAuthorizationRequest(request) {
+function startAuthentication(request) {
 	const nonce = Crypto.randomBytes(32).toString('hex');
 	const state = Crypto.randomBytes(32).toString('hex');
 	const pkce = PkceChallenge(128);
@@ -163,7 +174,7 @@ function getAuthorizationRequest(request) {
 	};
 }
 
-function getRedirectPayload(sub, path) {
+function generateAuthorizedResponse(sub, path) {
 	const response = {
 		status: '302',
 		statusDescription: 'Found',
@@ -238,7 +249,7 @@ function decrypt(encrypted) {
     return decryptedData;
 }
 
-function handleErrorResponse(err) {
+function generateUnauthorizedResponse(err) {
 	const errors = {
 		invalid_request: 'Invalid Request',
 		unsupported_response_type: 'Unsupported Response Type',
@@ -256,10 +267,6 @@ function handleErrorResponse(err) {
 		error = err;
 	}
 
-	return getUnauthorizedResponse(error);
-}
-
-function getUnauthorizedResponse(error) {
 	const body = `<!DOCTYPE html>
 	<html lang="en">
 	<head>
@@ -299,7 +306,7 @@ function getUnauthorizedResponse(error) {
 	};
 }
 
-function getInternalServerErrorPayload() {
+function generateInternalServerErrorResponse() {
 	const body = `<!DOCTYPE html>
   <html lang="en">
   <head>
