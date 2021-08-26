@@ -34,8 +34,8 @@ function hasValidSession(request) {
     try {
         const { headers } = request;
         const sub =
-            "cookie" in headers && "SESSION" in Cookie.parse(headers.cookie[0].value)
-                ? Cookie.parse(headers.cookie[0].value).SESSION
+            "cookie" in headers && "CFA_SESSION" in Cookie.parse(headers.cookie[0].value)
+                ? Cookie.parse(headers.cookie[0].value).CFA_SESSION
                 : "";
         if (!sub) {
             return false;
@@ -66,7 +66,7 @@ async function handleCallback(request) {
         return generateUnauthorizedResponse("no_code_found");
     }
     const oidcCtx = JSON.parse(
-        decrypt(Cookie.parse(headers.cookie[0].value).ACTX)
+        decrypt(Cookie.parse(headers.cookie[0].value).CFA_CTX)
     );
     if (oidcCtx.expires_at < getNow()) {
         return startAuthentication(request);
@@ -152,7 +152,7 @@ function startAuthentication(request) {
             "set-cookie": [
                 {
                     key: "Set-Cookie",
-                    value: Cookie.serialize("SESSION", "", {
+                    value: Cookie.serialize("CFA_SESSION", "", {
                         path: "/",
                         expires: new Date(1970, 1, 1, 0, 0, 0, 0)
                     })
@@ -160,7 +160,7 @@ function startAuthentication(request) {
                 {
                     key: "Set-Cookie",
                     value: Cookie.serialize(
-                        "ACTX",
+                        "CFA_CTX",
                         `${encrypt(
                             JSON.stringify({
                                 nonce: nonce,
@@ -198,7 +198,7 @@ function generateAuthorizedResponse(sub, path) {
                 {
                     key: "Set-Cookie",
                     value: Cookie.serialize(
-                        "SESSION",
+                        "CFA_SESSION",
                         `${encrypt(
                             JSON.stringify({
                                 sub: sub,
@@ -215,7 +215,7 @@ function generateAuthorizedResponse(sub, path) {
                 },
                 {
                     key: "Set-Cookie",
-                    value: Cookie.serialize("ACTX", "", {
+                    value: Cookie.serialize("CFA_CTX", "", {
                         path: "/",
                         expires: new Date(1970, 1, 1, 0, 0, 0, 0)
                     })
@@ -311,14 +311,14 @@ function generateUnauthorizedResponse(err) {
             "set-cookie": [
                 {
                     key: "Set-Cookie",
-                    value: Cookie.serialize("SESSION", "", {
+                    value: Cookie.serialize("CFA_SESSION", "", {
                         path: "/",
                         expires: new Date(1970, 1, 1, 0, 0, 0, 0)
                     })
                 },
                 {
                     key: "Set-Cookie",
-                    value: Cookie.serialize("ACTX", "", {
+                    value: Cookie.serialize("CFA_CTX", "", {
                         path: "/",
                         expires: new Date(1970, 1, 1, 0, 0, 0, 0)
                     })
