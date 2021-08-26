@@ -34,8 +34,8 @@ function hasValidSession(request) {
     try {
         const { headers } = request;
         const sub =
-            "cookie" in headers && "SUB" in Cookie.parse(headers.cookie[0].value)
-                ? Cookie.parse(headers.cookie[0].value).SUB
+            "cookie" in headers && "SESSION" in Cookie.parse(headers.cookie[0].value)
+                ? Cookie.parse(headers.cookie[0].value).SESSION
                 : "";
         if (!sub) {
             return false;
@@ -63,16 +63,16 @@ async function handleCallback(request) {
         return generateUnauthorizedResponse(queryString.error);
     }
     if (!queryString.code) {
-        return generateUnauthorizedResponse("No Code Found");
+        return generateUnauthorizedResponse("no_code_found");
     }
     const oidcCtx = JSON.parse(
-        decrypt(Cookie.parse(headers.cookie[0].value).OIDC)
+        decrypt(Cookie.parse(headers.cookie[0].value).ACTX)
     );
     if (oidcCtx.expires_at < getNow()) {
         return startAuthentication(request);
     }
     if (queryString.state !== oidcCtx.state) {
-        return generateUnauthorizedResponse("Invalid State");
+        return generateUnauthorizedResponse("invalid_state");
     }
     const { idToken, decodedToken } = await getIdAndDecodedToken(
         queryString.code,
@@ -93,20 +93,16 @@ async function handleCallback(request) {
         });
         return generateAuthorizedResponse(decodedToken.payload.sub, oidcCtx.path);
     } catch (err) {
-        if (!err || !err.name) {
-            Log.error(err);
-            return generateUnauthorizedResponse(`User is Not Permitted`);
+        Log.error(err);
+        if(err || !err.name) {
+            return generateUnauthorizedResponse();
         }
+
         switch (err.name) {
             case "TokenExpiredError":
-                Log.error(err);
                 return startAuthentication(request);
-            case "JsonWebTokenError":
-                Log.error(err);
-                return generateUnauthorizedResponse(err.message);
             default:
-                Log.error(err);
-                return generateUnauthorizedResponse(`User is Not Permitted`);
+                return generateUnauthorizedResponse();
         }
     }
 }
@@ -156,7 +152,7 @@ function startAuthentication(request) {
             "set-cookie": [
                 {
                     key: "Set-Cookie",
-                    value: Cookie.serialize("SUB", "", {
+                    value: Cookie.serialize("SESSION", "", {
                         path: "/",
                         expires: new Date(1970, 1, 1, 0, 0, 0, 0)
                     })
@@ -164,7 +160,7 @@ function startAuthentication(request) {
                 {
                     key: "Set-Cookie",
                     value: Cookie.serialize(
-                        "OIDC",
+                        "ACTX",
                         `${encrypt(
                             JSON.stringify({
                                 nonce: nonce,
@@ -202,7 +198,7 @@ function generateAuthorizedResponse(sub, path) {
                 {
                     key: "Set-Cookie",
                     value: Cookie.serialize(
-                        "SUB",
+                        "SESSION",
                         `${encrypt(
                             JSON.stringify({
                                 sub: sub,
@@ -219,7 +215,7 @@ function generateAuthorizedResponse(sub, path) {
                 },
                 {
                     key: "Set-Cookie",
-                    value: Cookie.serialize("OIDC", "", {
+                    value: Cookie.serialize("ACTX", "", {
                         path: "/",
                         expires: new Date(1970, 1, 1, 0, 0, 0, 0)
                     })
@@ -283,14 +279,14 @@ function generateUnauthorizedResponse(err) {
         unauthorized_client: "Unauthorized Client",
         access_denied: "Access Denied",
         server_error: "Server Error",
-        temporarily_unavailable: "Temporarily Unavailable"
+        temporarily_unavailable: "Temporarily Unavailable",
+        no_code_found: "No Code Found",
+        invalid_state: "Invalid State"
     };
 
-    let error = "";
-    if (errors[err] != null) {
+    let error = "User is Not Permitted";
+    if(err && errors[err]) {
         error = errors[err];
-    } else {
-        error = err;
     }
 
     const body = `<!DOCTYPE html>
@@ -315,14 +311,14 @@ function generateUnauthorizedResponse(err) {
             "set-cookie": [
                 {
                     key: "Set-Cookie",
-                    value: Cookie.serialize("SUB", "", {
+                    value: Cookie.serialize("SESSION", "", {
                         path: "/",
                         expires: new Date(1970, 1, 1, 0, 0, 0, 0)
                     })
                 },
                 {
                     key: "Set-Cookie",
-                    value: Cookie.serialize("OIDC", "", {
+                    value: Cookie.serialize("ACTX", "", {
                         path: "/",
                         expires: new Date(1970, 1, 1, 0, 0, 0, 0)
                     })
