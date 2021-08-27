@@ -70,7 +70,7 @@ async function handleCallback(request) {
         decrypt(Cookie.parse(headers.cookie[0].value).CFA_CTX)
     );
     if (oidcCtx.expires_at < getNow()) {
-        return startAuthentication(request);
+        return generateUnauthorizedResponse("time_out");
     }
     if (queryString.state !== oidcCtx.state) {
         return generateUnauthorizedResponse("invalid_state");
@@ -273,7 +273,8 @@ function generateUnauthorizedResponse(err) {
         server_error: "Server Error",
         temporarily_unavailable: "Temporarily Unavailable",
         no_code_found: "No Code Found",
-        invalid_state: "Invalid State"
+        invalid_state: "Invalid State",
+        time_out: "Time Out"
     };
 
     let error = "User is Not Permitted";
