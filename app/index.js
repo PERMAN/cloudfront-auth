@@ -194,12 +194,12 @@ function generateAuthorizedResponse(sub, path) {
                         `${encrypt(
                             JSON.stringify({
                                 sub: sub,
-                                expires_at: getNow() + process.env.SESSION_DURATION
+                                expires_at: getNow() + parseInt(process.env.SESSION_DURATION)
                             })
                         )}`,
                         {
                             path: "/",
-                            maxAge: process.env.SESSION_DURATION,
+                            maxAge: parseInt(process.env.SESSION_DURATION),
                             httpOnly: true,
                             secure: true
                         }
