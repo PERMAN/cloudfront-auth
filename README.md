@@ -1,37 +1,33 @@
 # cloudfront-auth
 
-PERMAN Federationを利用して、Amazon CloudFront に OpenID Connectで認証をかけます。
+Create an AWS Lambda@Edge that authenticates to Amazon ClouFront with OpenID Connect.
 
-## 事前準備
+## USAGE
 
-`.env`ファイルを作成してください。
-
-```
-# cloudfrontのドメイン
-# https://example.com
-CLOUDFRONT_URL=
-# OpenID ConnectのクライアントID
-CLIENT_ID=
-# OpenID Connectのクライアントシークレット
-CLIENT_SECRET=
-# セッションの有効期限(秒)
-SESSION_DURATION=
-# Cookie暗号化用キー
-# crypto.randomBytes(32).toString('hex')
-ENCRYPT_KEY=
-# デバッグモード
-DEBUG=true or false
-# 下記から設定を取得
-# curl -k https://federation.perman.jp/.well-known/openid-configuration
-ISSUER=
-AUTHZ_ENDPOINT=
-TOKEN_ENDPOINT=
-JWKS_URI=
-```
-
-## インストール
+See [app/README.md](app/README.md) about variables.
 
 ```
-npm install --production
-```
+module "cloudfront-auth" {
+  source           = "github.com/PERMAN/cloudfront-auth"
+  cloudfront_url   = ""
+  client_id        = ""
+  client_secret    = ""
+  issuer           = ""
+  authz_endpoint   = ""
+  token_endpoint   = ""
+  jwks_uri         = ""
+  session_duration = ""
+  encrypt_key      = ""
+}
 
+resource "aws_cloudfront_distribution" "example" {
+  # ... other configuration ...
+
+    lambda_function_association {
+      event_type   = "viewer-request"
+      lambda_arn   = module.cloudfront-auth.cloudfront-auth_qualified_arn
+      include_body = false
+    }
+}
+
+```
