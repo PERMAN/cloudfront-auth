@@ -1,4 +1,9 @@
+.terraform.lock.hcl
+.terraform/
+
 node_modules
 .env
 env*
 *.zip
+
+.perman-aws-vault

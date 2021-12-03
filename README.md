@@ -9,6 +9,7 @@ See [app/README.md](app/README.md) about variables.
 ```
 module "cloudfront-auth" {
   source           = "github.com/PERMAN/cloudfront-auth"
+  function_name    = "" # default "cloudfront-auth"
   cloudfront_url   = ""
   client_id        = ""
   client_secret    = ""
@@ -18,6 +19,7 @@ module "cloudfront-auth" {
   jwks_uri         = ""
   session_duration = ""
   encrypt_key      = ""
+
 }
 
 resource "aws_cloudfront_distribution" "example" {

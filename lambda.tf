@@ -32,7 +32,7 @@ data "template_file" "cloudfront-auth" {
 }
 
 resource "aws_iam_role" "cloudfront-auth" {
-  name               = "cloudfront-auth"
+  name               = var.function_name
   assume_role_policy = file("${path.module}/policy/assume_role_policy.json")
 }
 
@@ -43,7 +43,7 @@ resource "aws_iam_role_policy" "cloudfront-auth" {
 
 resource "aws_lambda_function" "cloudfront-auth" {
   filename      = data.archive_file.cloudfront-auth.output_path
-  function_name = "cloudfront-auth"
+  function_name = var.function_name
   handler       = "index.handler"
   timeout       = 5
   role          = aws_iam_role.cloudfront-auth.arn
