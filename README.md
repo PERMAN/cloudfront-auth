@@ -1,6 +1,6 @@
 # cloudfront-auth
 
-Create an AWS Lambda@Edge that authenticates to Amazon ClouFront with OpenID Connect.
+Create an AWS Lambda@Edge that authenticates to Amazon CloudFront with OpenID Connect.
 
 ## USAGE
 
