@@ -17,7 +17,7 @@
     "jsonwebtoken": "^8.5.1",
     "jwk-to-pem": "^2.0.5",
     "lambda-log": "^3.0.0",
-    "minimist": ">=1.2.5",
+    "minimist": ">=1.2.6",
     "pkce-challenge": "^2.2.0"
   },
   "devDependencies": {
