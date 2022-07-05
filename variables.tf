@@ -37,6 +37,6 @@ variable "encrypt_key" {
 }
 
 variable "function_name" {
-  type = string
+  type    = string
   default = "cloudfront-auth"
 }
