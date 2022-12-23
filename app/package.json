@@ -8,11 +8,9 @@
     "format": "node_modules/prettier/bin-prettier.js --write src/js/**/*.js"
   },
   "dependencies": {
-    "acorn": ">=8.4.1",
     "axios": "^0.22.0",
     "cookie": "^0.4.1",
     "dotenv": "^10.0.0",
-    "elliptic": ">=6.5.4",
     "escape-html": "^1.0.3",
     "jsonwebtoken": "^9.0.0",
     "jwk-to-pem": "^2.0.5",
