@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "setup": "npm install",
+    "build": "rm -rf dist && esbuild ./src/* --entry-names=[dir]/index --bundle --minify --sourcemap --platform=node --target=node16.14 --outdir=dist",
     "format": "node_modules/prettier/bin-prettier.js --write src/js/**/*.js"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
   "devDependencies": {
     "@types/node": "^16.3.3",
     "babel-eslint": "^10.1.0",
+    "esbuild": "^0.17.3",
     "eslint": "^7.31.0",
     "eslint-config-airbnb": "^18.2.1",
     "eslint-config-prettier": "^8.3.0",
@@ -29,9 +31,9 @@
     "eslint-plugin-react": "^7.24.0",
     "jsverify": "^0.8.4",
     "leaked-handles": "^5.2.0",
+    "minimist": ">=1.2.6",
     "nyc": "^15.1.0",
     "prettier": "^2.3.2",
-    "minimist": ">=1.2.6",
     "tape": "^5.2.2"
   }
 }

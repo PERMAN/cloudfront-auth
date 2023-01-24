@@ -2,6 +2,7 @@
 .terraform/
 
 node_modules
+dist
 .env
 env*
 *.zip
