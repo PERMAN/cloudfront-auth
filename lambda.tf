@@ -16,13 +16,6 @@ resource "null_resource" "cloudfront-auth" {
   }
 }
 
-data "archive_file" "cloudfront-auth" {
-  depends_on  = [null_resource.cloudfront-auth]
-  type        = "zip"
-  source_dir  = "${path.module}/app"
-  output_path = "${path.module}/cloudfront-auth.zip"
-}
-
 data "template_file" "cloudfront-auth" {
   template = file("${path.module}/policy/cloudfront-auth.json")
 
@@ -42,7 +35,8 @@ resource "aws_iam_role_policy" "cloudfront-auth" {
 }
 
 resource "aws_lambda_function" "cloudfront-auth" {
-  filename      = data.archive_file.cloudfront-auth.output_path
+  depends_on  = [null_resource.cloudfront-auth]
+  filename      = "${path.module}/app/dist/app.zip"
   function_name = var.function_name
   handler       = "index.handler"
   timeout       = 5
