@@ -5,23 +5,23 @@
   "main": "index.js",
   "scripts": {
     "setup": "npm install",
-    "build": "rm -rf dist && esbuild ./src/* --entry-names=[dir]/index --bundle --minify --sourcemap --platform=node --target=node16.14 --outdir=dist",
+    "build": "rm -rf dist && esbuild ./src/* --entry-names=[dir]/index --bundle --minify --sourcemap --platform=node --target=node22 --outdir=dist",
     "format": "node_modules/prettier/bin-prettier.js --write src/js/**/*.js"
   },
   "dependencies": {
-    "axios": "^0.22.0",
-    "cookie": "^0.4.1",
-    "dotenv": "^10.0.0",
+    "axios": "^1.7.9",
+    "cookie": "^1.0.2",
+    "dotenv": "^16.4.7",
     "escape-html": "^1.0.3",
-    "jsonwebtoken": "^9.0.0",
-    "jwk-to-pem": "^2.0.5",
-    "lambda-log": "^3.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "jwk-to-pem": "^2.0.7",
+    "lambda-log": "^3.1.0",
     "pkce-challenge": "^2.2.0"
   },
   "devDependencies": {
-    "@types/node": "^16.3.3",
+    "@types/node": "^22.10.7",
     "babel-eslint": "^10.1.0",
-    "esbuild": "^0.17.3",
+    "esbuild": "^0.17.19",
     "eslint": "^7.31.0",
     "eslint-config-airbnb": "^18.2.1",
     "eslint-config-prettier": "^8.3.0",

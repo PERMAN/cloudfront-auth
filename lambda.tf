@@ -42,6 +42,6 @@ resource "aws_lambda_function" "cloudfront-auth" {
   timeout       = 5
   role          = aws_iam_role.cloudfront-auth.arn
 
-  runtime = "nodejs14.x"
+  runtime = "nodejs22.x"
   publish = true
 }
