@@ -19,7 +19,7 @@
     "pkce-challenge": "^2.2.0"
   },
   "devDependencies": {
-    "@types/node": "^22.10.7",
+    "@types/node": "^22.10.10",
     "babel-eslint": "^10.1.0",
     "esbuild": "^0.17.19",
     "eslint": "^7.31.0",
