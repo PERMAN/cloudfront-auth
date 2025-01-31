@@ -24,6 +24,11 @@ data "template_file" "cloudfront-auth" {
   }
 }
 
+data "local_file" "lambda_zip" {
+  depends_on = [null_resource.cloudfront-auth]
+  filename   = "${path.module}/app/dist/app.zip"
+}
+
 resource "aws_iam_role" "cloudfront-auth" {
   name               = var.function_name
   assume_role_policy = file("${path.module}/policy/assume_role_policy.json")
@@ -35,7 +40,7 @@ resource "aws_iam_role_policy" "cloudfront-auth" {
 }
 
 resource "aws_lambda_function" "cloudfront-auth" {
-  depends_on  = [null_resource.cloudfront-auth]
+  depends_on    = [null_resource.cloudfront-auth, data.local_file.lambda_zip]
   filename      = "${path.module}/app/dist/app.zip"
   function_name = var.function_name
   handler       = "index.handler"
