@@ -1,4 +1,8 @@
 resource "null_resource" "cloudfront-auth" {
+  triggers = {
+    # define version number
+    version = "1.0.0" // Updating this value will cause it to run again
+  }
   provisioner "local-exec" {
     command     = "./build.sh"
     working_dir = path.module
@@ -35,13 +39,13 @@ resource "aws_iam_role_policy" "cloudfront-auth" {
 }
 
 resource "aws_lambda_function" "cloudfront-auth" {
-  depends_on  = [null_resource.cloudfront-auth]
+  depends_on    = [null_resource.cloudfront-auth]
   filename      = "${path.module}/app/dist/app.zip"
   function_name = var.function_name
   handler       = "index.handler"
   timeout       = 5
   role          = aws_iam_role.cloudfront-auth.arn
 
-  runtime = "nodejs14.x"
+  runtime = "nodejs22.x"
   publish = true
 }
