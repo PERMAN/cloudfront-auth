@@ -7,4 +7,4 @@
 
 ### self check
 
-- [ ] Did you update the version number if you want to run it again?
+- [ ] If the app needs to be updated, update the version number.
