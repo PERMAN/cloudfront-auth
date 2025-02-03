@@ -1,6 +1,6 @@
 resource "null_resource" "cloudfront-auth" {
   triggers = {
-    always_run = "${timestamp()}"
+    always_run = timestamp()
   }
   provisioner "local-exec" {
     command     = "./build.sh"
