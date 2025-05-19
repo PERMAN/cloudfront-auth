@@ -20,14 +20,6 @@ resource "null_resource" "cloudfront-auth" {
   }
 }
 
-data "template_file" "cloudfront-auth" {
-  template = file("${path.module}/policy/cloudfront-auth.json")
-
-  vars = {
-    account_id = data.aws_caller_identity.caller.account_id
-  }
-}
-
 resource "aws_iam_role" "cloudfront-auth" {
   name               = var.function_name
   assume_role_policy = file("${path.module}/policy/assume_role_policy.json")
@@ -35,7 +27,9 @@ resource "aws_iam_role" "cloudfront-auth" {
 
 resource "aws_iam_role_policy" "cloudfront-auth" {
   role   = aws_iam_role.cloudfront-auth.name
-  policy = data.template_file.cloudfront-auth.rendered
+  policy = templatefile("${path.module}/policy/cloudfront-auth.json", { 
+    account_id = data.aws_caller_identity.caller.account_id
+  })
 }
 
 resource "aws_lambda_function" "cloudfront-auth" {
