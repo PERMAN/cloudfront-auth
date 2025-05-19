@@ -27,7 +27,9 @@ resource "aws_iam_role" "cloudfront-auth" {
 
 resource "aws_iam_role_policy" "cloudfront-auth" {
   role   = aws_iam_role.cloudfront-auth.name
-  policy = templatefile("${path.module}/policy/cloudfront-auth.json", {"account_id": data.aws_caller_identity.caller.account_id})
+  policy = templatefile("${path.module}/policy/cloudfront-auth.json", { 
+    account_id = data.aws_caller_identity.caller.account_id
+  })
 }
 
 resource "aws_lambda_function" "cloudfront-auth" {
