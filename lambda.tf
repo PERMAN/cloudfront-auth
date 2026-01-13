@@ -1,7 +1,7 @@
 resource "null_resource" "cloudfront-auth" {
   triggers = {
     # define version number
-    version = "1.0.0" // Updating this value will cause it to run again
+    version = "1.1.0" // Updating this value will cause it to run again
   }
   provisioner "local-exec" {
     command     = "./build.sh"
