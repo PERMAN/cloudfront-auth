@@ -1,6 +1,6 @@
 #!/bin/bash
 cd app/
-npm install
+npm ci
 npm run build
 echo -n > .env
 echo CLOUDFRONT_URL=$CLOUDFRONT_URL >> .env
