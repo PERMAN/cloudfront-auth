@@ -57,7 +57,7 @@ function hasValidSession(request) {
         Log.debug(`authorized user: ${decryptedData.sub}`);
         return true;
     } catch (err) {
-        Log.error(err);
+        Log.warn(err);
         return false;
     }
 }
@@ -73,9 +73,15 @@ async function handleCallback(request) {
     if (!queryString.code) {
         return generateUnauthorizedResponse("no_code_found");
     }
-    const oidcCtx = JSON.parse(
-        decrypt(Cookie.parse(headers.cookie[0].value).CFA_CTX, "CFA_CTX")
-    );
+    let oidcCtx;
+    try {
+        oidcCtx = JSON.parse(
+            decrypt(Cookie.parse(headers.cookie[0].value).CFA_CTX, "CFA_CTX")
+        );
+    } catch (err) {
+        Log.warn(err);
+        return generateUnauthorizedResponse("time_out");
+    }
     if (oidcCtx.expires_at < getNow()) {
         return generateUnauthorizedResponse("time_out");
     }
