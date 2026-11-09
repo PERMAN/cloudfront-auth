@@ -10,10 +10,11 @@ var escapeHtml = require('escape-html')
 require("dotenv").config();
 
 exports.handler = async event => {
-    Log.options.meta.event = event;
     Log.options.debug = process.env.DEBUG || false;
     try {
         const { request } = event.Records[0].cf;
+        // Attach only the method and URI to every log entry (headers contain cookies, the query string contains the authorization code)
+        Log.options.meta.request = { method: request.method, uri: request.uri };
         return await handleRequest(request);
     } catch (err) {
         Log.error(err);
