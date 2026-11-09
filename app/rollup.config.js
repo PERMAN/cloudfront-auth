@@ -9,7 +9,7 @@ module.exports = {
     file: 'dist/index.js',
     format: 'cjs',
     sourcemap: true,
-    exports: 'named'
+    exports: 'default'
   },
   plugins: [
     json(),
