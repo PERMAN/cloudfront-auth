@@ -1,7 +1,30 @@
+locals {
+  # Hash of the build inputs (source files and the values written to .env by build.sh).
+  # Changing any of these rebuilds the package and updates the Lambda function.
+  app_source_hash = sha256(join("", concat(
+    [
+      for f in concat(
+        ["build.sh", "app/package.json", "app/package-lock.json", "app/rollup.config.js", "app/.npmrc"],
+        [for s in sort(fileset("${path.module}/app/src", "**")) : "app/src/${s}"]
+      ) : filesha256("${path.module}/${f}")
+    ],
+    [nonsensitive(sha256(jsonencode({
+      cloudfront_url   = var.cloudfront_url
+      client_id        = var.client_id
+      client_secret    = var.client_secret
+      issuer           = var.issuer
+      authz_endpoint   = var.authz_endpoint
+      token_endpoint   = var.token_endpoint
+      jwks_uri         = var.jwks_uri
+      session_duration = var.session_duration
+      encrypt_key      = var.encrypt_key
+    })))]
+  )))
+}
+
 resource "null_resource" "cloudfront-auth" {
   triggers = {
-    # define version number
-    version = "1.1.0" // Updating this value will cause it to run again
+    app_source_hash = local.app_source_hash
   }
   provisioner "local-exec" {
     command     = "./build.sh"
@@ -33,12 +56,13 @@ resource "aws_iam_role_policy" "cloudfront-auth" {
 }
 
 resource "aws_lambda_function" "cloudfront-auth" {
-  depends_on    = [null_resource.cloudfront-auth]
-  filename      = "${path.module}/app/dist/app.zip"
-  function_name = var.function_name
-  handler       = "index.handler"
-  timeout       = 5
-  role          = aws_iam_role.cloudfront-auth.arn
+  depends_on       = [null_resource.cloudfront-auth]
+  filename         = "${path.module}/app/dist/app.zip"
+  source_code_hash = local.app_source_hash
+  function_name    = var.function_name
+  handler          = "index.handler"
+  timeout          = 5
+  role             = aws_iam_role.cloudfront-auth.arn
 
   runtime = "nodejs22.x"
   publish = true

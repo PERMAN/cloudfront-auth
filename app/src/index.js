@@ -10,10 +10,11 @@ var escapeHtml = require('escape-html')
 require("dotenv").config();
 
 exports.handler = async event => {
-    Log.options.meta.event = event;
     Log.options.debug = process.env.DEBUG || false;
     try {
         const { request } = event.Records[0].cf;
+        // Attach only the method and URI to every log entry (headers contain cookies, the query string contains the authorization code)
+        Log.options.meta.request = { method: request.method, uri: request.uri };
         return await handleRequest(request);
     } catch (err) {
         Log.error(err);
@@ -41,16 +42,23 @@ function hasValidSession(request) {
         if (!sub) {
             return false;
         }
-        const decryptedData = JSON.parse(decrypt(sub));
+        const decryptedData = JSON.parse(decrypt(sub, "CFA_SESSION"));
+        const now = getNow();
         if (!decryptedData) {
             return false;
-        } else if (decryptedData.expires_at < getNow()) {
+        } else if (typeof decryptedData.sub !== "string" || decryptedData.sub === "") {
+            return false;
+        } else if (
+            typeof decryptedData.expires_at !== "number" ||
+            decryptedData.expires_at < now ||
+            decryptedData.expires_at > now + parseInt(process.env.SESSION_DURATION) + CLOCK_SKEW_SECONDS
+        ) {
             return false;
         }
         Log.debug(`authorized user: ${decryptedData.sub}`);
         return true;
     } catch (err) {
-        Log.error(err);
+        Log.warn(err);
         return false;
     }
 }
@@ -66,9 +74,15 @@ async function handleCallback(request) {
     if (!queryString.code) {
         return generateUnauthorizedResponse("no_code_found");
     }
-    const oidcCtx = JSON.parse(
-        decrypt(Cookie.parse(headers.cookie[0].value).CFA_CTX)
-    );
+    let oidcCtx;
+    try {
+        oidcCtx = JSON.parse(
+            decrypt(Cookie.parse(headers.cookie[0].value).CFA_CTX, "CFA_CTX")
+        );
+    } catch (err) {
+        Log.warn(err);
+        return generateUnauthorizedResponse("time_out");
+    }
     if (oidcCtx.expires_at < getNow()) {
         return generateUnauthorizedResponse("time_out");
     }
@@ -160,7 +174,8 @@ function startAuthentication(request) {
                                 verifier: pkce.code_verifier,
                                 path: request.uri.startsWith("/") ? request.uri : "/",
                                 expires_at: getNow() + 180
-                            })
+                            }),
+                            "CFA_CTX"
                         )}`,
                         {
                             path: "/",
@@ -195,7 +210,8 @@ function generateAuthorizedResponse(sub, path) {
                             JSON.stringify({
                                 sub: sub,
                                 expires_at: getNow() + parseInt(process.env.SESSION_DURATION)
-                            })
+                            }),
+                            "CFA_SESSION"
                         )}`,
                         {
                             path: "/",
@@ -238,29 +254,45 @@ function getNow() {
     return Math.floor(Date.now() / 1000);
 }
 
-function encrypt(data) {
-    const iv = Crypto.randomBytes(16);
+const IV_LENGTH = 12;
+const AUTH_TAG_LENGTH = 16;
+// Tolerance for clock differences between Lambda@Edge instances when checking the expires_at upper bound
+const CLOCK_SKEW_SECONDS = 60;
+
+// AES-256-GCM. The cookie name is bound as AAD so that a value issued for one
+// cookie (e.g. CFA_CTX) cannot be decrypted as another (e.g. CFA_SESSION).
+// Output format: hex(iv || authTag || ciphertext)
+function encrypt(data, cookieName) {
+    const iv = Crypto.randomBytes(IV_LENGTH);
     const cipher = Crypto.createCipheriv(
-        "aes-256-cbc",
+        "aes-256-gcm",
         Buffer.from(process.env.ENCRYPT_KEY, "hex"),
-        iv
+        iv,
+        { authTagLength: AUTH_TAG_LENGTH }
     );
-    let encryptedData = cipher.update(data, "utf8", "hex");
-    encryptedData += cipher.final("hex");
-    return iv.toString("hex") + encryptedData;
+    cipher.setAAD(Buffer.from(cookieName, "utf8"));
+    const encryptedData = Buffer.concat([cipher.update(data, "utf8"), cipher.final()]);
+    return Buffer.concat([iv, cipher.getAuthTag(), encryptedData]).toString("hex");
 }
 
-function decrypt(encrypted) {
-    const iv = Buffer.from(encrypted.slice(0, 32), "hex");
-    const encryptedData = Buffer.from(encrypted.slice(32), "hex");
+function decrypt(encrypted, cookieName) {
+    const buf = Buffer.from(encrypted, "hex");
+    if (buf.length <= IV_LENGTH + AUTH_TAG_LENGTH) {
+        throw new Error("invalid cookie value");
+    }
     const decipher = Crypto.createDecipheriv(
-        "aes-256-cbc",
+        "aes-256-gcm",
         Buffer.from(process.env.ENCRYPT_KEY, "hex"),
-        iv
+        buf.subarray(0, IV_LENGTH),
+        { authTagLength: AUTH_TAG_LENGTH }
     );
-    let decryptedData = decipher.update(encryptedData, "hex", "utf8");
-    decryptedData += decipher.final("utf8");
-    return decryptedData;
+    decipher.setAAD(Buffer.from(cookieName, "utf8"));
+    decipher.setAuthTag(buf.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH));
+    const decryptedData = Buffer.concat([
+        decipher.update(buf.subarray(IV_LENGTH + AUTH_TAG_LENGTH)),
+        decipher.final()
+    ]);
+    return decryptedData.toString("utf8");
 }
 
 function generateUnauthorizedResponse(err) {
