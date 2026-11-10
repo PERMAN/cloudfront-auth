@@ -172,7 +172,7 @@ function startAuthentication(request) {
                                 nonce: nonce,
                                 state: state,
                                 verifier: pkce.code_verifier,
-                                path: request.uri.startsWith("/") ? request.uri : "/",
+                                path: toSameOriginPath(request.uri),
                                 expires_at: getNow() + 180
                             }),
                             "CFA_CTX"
@@ -198,7 +198,7 @@ function generateAuthorizedResponse(sub, path) {
             location: [
                 {
                     key: "Location",
-                    value: path.startsWith("/") ? path : "/"
+                    value: toSameOriginPath(path)
                 }
             ],
             "set-cookie": [
@@ -248,6 +248,11 @@ async function verifyJwt(token, pem, options) {
 
 async function getJWKS() {
     return (await Axios.get(process.env.JWKS_URI)).data;
+}
+
+// Only allow paths on this host (browsers treat //host and /\host as another origin, and drop tabs and newlines before parsing)
+function toSameOriginPath(path) {
+    return /^\/(?![/\\])[^\x00-\x1f\x7f]*$/.test(path) ? path : "/";
 }
 
 function getNow() {
